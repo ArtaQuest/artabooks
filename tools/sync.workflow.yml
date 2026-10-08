@@ -1,0 +1,45 @@
+name: sync
+
+# Pull every published notebook from artaquest.com into this repository. Read-only against the
+# site (its public API), so no secret is involved; the only write is this repository's own commit,
+# made with the job's GITHUB_TOKEN.
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: [tools/sync.py, .github/workflows/sync.yml]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Mirror published notebooks
+        run: python3 tools/sync.py
+      - name: Commit changes
+        run: |
+          # GitHub disables a schedule after 60 days without repository activity. A quiet month
+          # would otherwise stop the mirror for good, so touch a heartbeat when nothing else moved.
+          last=$(git log -1 --format=%ct)
+          if [ -z "$(git status --porcelain)" ] && [ $(( $(date +%s) - last )) -gt $(( 30 * 86400 )) ]; then
+            date -u +%Y-%m-%dT%H:%MZ > .heartbeat
+          fi
+          if [ -n "$(git status --porcelain)" ]; then
+            git config user.name "artabooks-sync"
+            git config user.email "artabooks-sync@users.noreply.github.com"
+            git add -A
+            git commit -q -m "Sync published notebooks from artaquest.com"
+            git push -q
+          else
+            echo "nothing to sync"
+          fi
